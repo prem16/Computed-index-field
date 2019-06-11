@@ -1,0 +1,128 @@
+using Sitecore.ContentSearch;
+using Sitecore.ContentSearch.ComputedFields;
+using Sitecore.Data.Items;
+using Sitecore.Diagnostics;
+using System;
+using System.Linq;
+using System.Text.RegularExpressions;
+
+
+namespace adfadf.Group.WebApp.PipeLines
+{
+    public class SearchContentField : IComputedIndexField
+    {
+        public string FieldName { get; set; }
+
+        public string ReturnType { get; set; }
+
+        public object ComputeFieldValue(IIndexable indexable)
+        {
+            Assert.ArgumentNotNull(indexable, "indexable");
+
+
+            try
+            {
+                var indexItem = indexable as SitecoreIndexableItem;
+               
+                if (indexItem == null)
+                    return null;
+
+                var item = indexItem.Item;
+                item.Fields.ReadAll();
+
+                bool ExcludeFromSearch = false;
+                bool hasPagelayout = false;
+                if (item != null && item.Fields["ExcludeFromSearch"]!=null && !string.IsNullOrEmpty(item.Fields["ExcludeFromSearch"].Value))
+                {
+                    ExcludeFromSearch = Convert.ToBoolean(item.Fields["ExcludeFromSearch"].Value);
+                }
+
+                if (item != null && !ExcludeFromSearch)
+                {
+                    if (FieldName.ToLower() == "searchcontent")
+                    {
+                        indexItem.LoadAllFields();
+                        var listField = indexItem.Fields.Where(x =>
+                            (x.TypeKey.Contains("text") || x.TypeKey.Contains("rich"))
+                            && (!x.Name.Contains("_") || (x.Name.Contains("_") && x.Name.IndexOf("_") >= 1))
+                            && item.InnerData.Fields.GetFieldIDs().Any(y => y.ToString().Equals(x.Id.ToString()))
+                            ).ToList();
+
+
+                        var content = string.Empty;
+
+
+
+                        hasPagelayout = (item.Fields[Sitecore.FieldIDs.LayoutField] != null
+                           && !String.IsNullOrEmpty(item.Fields[Sitecore.FieldIDs.LayoutField].Value));
+
+
+                        if (listField != null && listField.Count > 0)
+                        {
+                            if (hasPagelayout && item.Fields["description"] != null)
+                            {
+                                content = Convert.ToString(item.Fields["description"].Value);
+                            }
+                            else
+                            {
+                                content = string.Join(" ", listField.Where(x => !string.IsNullOrEmpty(Convert.ToString(x.Value))).Select(x => x.Value));
+                            }
+
+                            content = StripHTML(content);
+                        };
+
+                        return content;
+
+                    }
+                    else if (FieldName.ToLower() == "searchtitle")
+                    {
+                        var content = string.Empty;
+                        hasPagelayout = (item.Fields[Sitecore.FieldIDs.LayoutField] != null
+                          && !String.IsNullOrEmpty(item.Fields[Sitecore.FieldIDs.LayoutField].Value));
+
+                        var parentItem = item.Axes.SelectItems("ancestor-or-self::*").FirstOrDefault(x => x.Fields[Sitecore.FieldIDs.LayoutField] != null
+                          && !String.IsNullOrEmpty(x.Fields[Sitecore.FieldIDs.LayoutField].Value));
+                        if (parentItem != null && parentItem.Fields.Count > 0 && parentItem.Fields["Title"] != null)
+                        {
+                            content = Convert.ToString(parentItem.Fields["Title"].Value);
+                        }
+                        return content;
+                    }
+                    else if (FieldName.ToLower() == "searchid")
+                    {
+                        var content = item.ID.ToGuid().ToString();
+                        return content;
+                    }
+                    else if (FieldName.ToLower() == "searchlinkurl")
+                    {
+                        var content = string.Empty;
+                        hasPagelayout = (item.Fields[Sitecore.FieldIDs.LayoutField] != null
+                          && !String.IsNullOrEmpty(item.Fields[Sitecore.FieldIDs.LayoutField].Value));
+
+                        var parentItem = item.Axes.SelectItems("ancestor-or-self::*").FirstOrDefault(x => x.Fields[Sitecore.FieldIDs.LayoutField] != null
+                          && !String.IsNullOrEmpty(x.Fields[Sitecore.FieldIDs.LayoutField].Value));
+                        if (parentItem != null && parentItem.Fields.Count > 0 && parentItem.Fields["Title"] != null)
+                        {
+                            content = parentItem.GetUrl();
+                            Uri url = new Uri(content.Contains("http") ? content: "http"+ content);
+                            content= url.AbsolutePath;
+                        }
+                        return content;
+                    }
+
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"An error occurred when indexing {indexable.Id}: {ex.Message}", ex, this);
+            }
+
+            return null;
+        }
+
+        public static string StripHTML(string input)
+        {
+            return Regex.Replace(input, "<.*?>", String.Empty);
+        }
+    }
+}
